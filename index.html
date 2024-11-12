@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<div class="my_dataviz-flex">
+    <h1>¿Qué países emiten mayores cantidades de gases de efecto invernadero por persona?</h1>
+    <!-- Load d3.js -->
+    <script src="https://d3js.org/d3.v4.js"></script>
+    <script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+    <script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.1.3/Tone.js"></script>
+
+    <link rel="stylesheet" href="chart.css">
+
+    <!-- Map container -->
+    <svg id="my_dataviz" width="1000" height="600"></svg>
+
+    <!-- Modal for country details -->
+    <div id="country_modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <div id="country_details"></div>
+        </div>
+    </div>
+    <div class="footer">
+        <p> <a href="https://mavenanalytics.io/data-playground?page=4&pageSize=5">Fuente: mavenanalytics (Our World in Data)</a> </p>
+</div>
+
+
+<script>
+// The svg
+var svg = d3.select("svg"),
+    width = +svg.attr("width"),
+    height = +svg.attr("height");
+
+// Map and projection
+var projection = d3.geoNaturalEarth1()
+    .scale(width / 1.6 / Math.PI)
+    .translate([width / 2, height / 1.8]);  
+
+var path = d3.geoPath().projection(projection);
+
+// Define color scale for CO2 emissions per capita
+var colorScale = d3.scaleSequential(d3.interpolateGreys)
+    .domain([0, 20]);
+
+// Map country name differences
+var countryNameMap = {
+    "USA": "United States",
+    "Democratic Republic of the Congo": "Democratic Republic of Congo",
+    "Republic of the Congo": "Congo",
+    "Republic of Serbia": "Serbia",
+    "Greenland" : "Denmark",
+    "United Republic of Tanzania": "Tanzania",
+    "England": "United Kingdom",
+    "Macedonia": "North Macedonia",
+    "Czech Republic":"Czechia",
+    "Ivory Coast":"Cote d'Ivoire"
+};
+
+// Function to normalize country name
+function normalizeCountryName(geoJsonName) {
+    return countryNameMap[geoJsonName] || geoJsonName;
+}
+
+function showCountryDetails(countryName, methane, nitrousOxide, co2, ghgTotal) {
+    var detailsDiv = d3.select("#country_details");
+    detailsDiv.html("");
+
+    detailsDiv.append("p")
+        .style("width", "84%")
+        .style("margin-left", "5.5%")
+        .html(`El país <strong>${countryName}</strong> emitió un total de <strong>${ghgTotal.toFixed(2)} toneladas </strong>de gases de efecto invernadero <strong>por habitante</strong>, distribuidos en:`);
+
+    var progressBar = detailsDiv.append("img")
+        .attr("src", "barra_porcentaje.png")
+        .attr("width", "76.8%")
+        .style("padding-right", "1%")
+        .style("margin-bottom", "0px")
+        .style("margin-top", "10px")
+        .attr("height", "auto");
+    var otros = (ghgTotal - (methane + nitrousOxide + co2)) > 0 ? (ghgTotal - (methane + nitrousOxide + co2)) : 0;
+    var Total = methane + nitrousOxide + co2 + otros;
+    var data = [
+        { type: "CH4", value: methane, percentage: methane / Total * 100 },
+        { type: "N2O", value: nitrousOxide, percentage: nitrousOxide / Total * 100 },
+        { type: "CO2", value: co2, percentage: co2 / Total * 100 },
+        { type: "Otros", value: otros > 0 ? otros : 0, percentage: otros > 0 ? otros / Total * 100 : 0 }
+    ];
+
+    // Ordenar datos y asignar ranking
+    data.sort((a, b) => b.percentage - a.percentage);
+    data.forEach((d, i) => d.rank = i + 1);
+
+    var width = 500;
+    var height = 140;
+    var margin = { top: -20, right: 65, bottom: 20, left: 50 };
+
+    var color = d3.scaleOrdinal()
+        .domain(["CH4", "N2O", "CO2", "Otros"])
+        .range(["#66c2a5", "#fc8d62", "#8da0cb", "#e78ac3"]);
+
+    var svg = detailsDiv.append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom + 60)
+        .append("g")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    var xScale = d3.scaleLinear()
+        .domain([0, Total])
+        .range([0, width]);
+
+    var cumulative = 0;
+
+    // Dibujar barras de color
+    svg.selectAll("rect")
+        .data(data)
+        .enter()
+        .append("rect")
+        .attr("x", d => {
+            var xPos = xScale(cumulative);
+            cumulative += d.value;
+            return xPos;
+        })
+        .attr("y", 40)
+        .attr("width", d => xScale(d.value))
+        .attr("height", height - margin.bottom - 100)
+        .attr("fill", d => color(d.type))
+        .append("title")
+        .text(d => `${d.type}: ${d.value.toFixed(2)} toneladas (${d.percentage.toFixed(1)}%)`);
+
+    cumulative = 0;
+
+    // Líneas invertidas para etiquetas con longitud proporcional al ranking
+    svg.selectAll(".arrow-line")
+        .data(data.filter(d => d.percentage > 0))
+        .enter()
+        .append("path")
+        .attr("d", (d, i) => {
+            var xPos = xScale(cumulative + d.value / 2);
+            cumulative += d.value;
+            var lineHeight =  (5 -d.rank) * 18 -40;
+            var lineLength = 5; // Longitud de la línea proporcional al ranking
+            return `M${xPos},${height - margin.bottom - 60} 
+                    V${height - margin.bottom + lineHeight} 
+                    H${xPos + lineLength}`; // Línea horizontal hacia la izquierda
+        })
+        .attr("stroke", "black")
+        .attr("stroke-width", 1)
+        .attr("fill", "none");
+
+    cumulative = 0;
+    // Etiquetas de texto alineadas al final de cada línea
+    svg.selectAll(".label-text")
+        .data(data.filter(d => d.percentage > 0))
+        .enter()
+        .append("text")
+        .attr("x", d => {
+            var xPos = xScale(cumulative + d.value / 2) -15;
+            cumulative += d.value;
+            return xPos + 21; // Texto alineado a la derecha de la línea
+        })
+        .attr("y", (d, i) => height - margin.bottom + (5 - d.rank) * 18 - 40)
+        .attr("text-anchor", "start")
+        .attr("font-size", "10px")
+        .attr("fill", "black")
+        .style("font-weight", "bold")
+        .each(function(d) {
+            var text = `${d.type}: ${d.percentage.toFixed(1)}%`;
+            var words = text.split(/\s+/).reverse();
+            var word;
+            var line = [];
+            var lineNumber = 0;
+            var lineHeight = 1.1; // ems
+            var y = d3.select(this).attr("y");
+            var dy = 0;
+            var tspan = d3.select(this).text(null).append("tspan").attr("x", d3.select(this).attr("x")).attr("y", y).attr("dy", dy + "em");
+            while (word = words.pop()) {
+                line.push(word);
+                tspan.text(line.join(" "));
+                if (tspan.node().getComputedTextLength() > 10) { // Max width 10px
+                    line.pop();
+                    tspan.text(line.join(" "));
+                    line = [word];
+                    tspan = d3.select(this).append("tspan").attr("x", d3.select(this).attr("x")).attr("y", y).attr("dy", ++lineNumber * lineHeight + dy + "em").text(word);
+                }
+            }
+        });
+
+    document.getElementById("country_modal").style.display = "block";
+}
+
+
+// Close modal function
+function closeModal() {
+    document.getElementById("country_modal").style.display = "none";
+}
+
+let players = {};
+
+// Precargar los audios y configurarlos
+function initializePlayers() {
+    const sounds = {
+        "MAS": "MAS.mp3",
+        "MEDIANO": "MEDIANO.mp3",
+        "MENOS": "MENOS.mp3"
+    };
+
+    for (const [key, url] of Object.entries(sounds)) {
+        players[key] = new Tone.Player({
+            url: url,
+            loop: false,
+            autostart: false,
+            onload: () => {
+                console.log(`Audio ${key} cargado correctamente y listo para reproducirse.`);
+            }
+        }).toDestination();
+
+        // Manejar errores de carga si el archivo no se carga correctamente
+        players[key].onerror = (error) => {
+            console.error(`Error al cargar el audio ${key}:`, error);
+        };
+    }
+}
+
+// Llamar a esta función al inicio para cargar los audios
+initializePlayers();
+
+// Función para reproducir el sonido con el volumen ajustado
+function playSound(rank) {
+    let playerKey;
+    let ajuste = 0;
+
+    if (rank >= 0 && rank < 60) {
+        playerKey = "MAS";
+    } else if (rank >= 60 && rank <= 120) {
+        playerKey = "MEDIANO";
+    } else {
+        playerKey = "MENOS";
+        ajuste = 20;
+    }
+
+    const player = players[playerKey];
+
+    if (!player || !player.loaded) {
+        console.log("Audio aún no cargado");
+        return;
+    }
+
+    if (player.state === "started") {
+        player.stop();
+    }
+
+    // Calcular volumen normalizado asegurándose de que esté en un rango válido
+    const normalizedVolume = Math.max(0, 1 - (rank / 150));
+    player.volume.value = Tone.gainToDb(normalizedVolume) + ajuste;  // Ajustar el volumen
+    player.start();
+}
+
+function stopSound() {
+    for (const player of Object.values(players)) {
+        if (player.state === "started") {
+            player.stop();
+        }
+    }
+}
+
+// Load world map and CO2 emissions data
+d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson", function(worldData) {
+    d3.json("./countries_data_2.json", function(gdpData) {
+        d3.json("./country_rank.json", function(rankData) {
+        // Draw the map
+        svg.append("g")
+            .selectAll("path")
+            .data(worldData.features)
+            .enter().append("path")
+            .attr("fill", function(d) {
+                var countryName = normalizeCountryName(d.properties.name);
+                var ghgPerCapita = gdpData["ghg_per_capita"][countryName];
+                return ghgPerCapita ? colorScale(ghgPerCapita) : "#ffffff";
+            })
+            .attr("d", path)
+            .style("stroke", "#fff")
+            .style("cursor", "pointer") // Cambiar el cursor a puntero
+            .on("click", function(d) {
+                var countryName = normalizeCountryName(d.properties.name);
+                var methane = gdpData["methane_per_capita"][countryName] || null;
+                var nitrousOxide = gdpData["nitrous_oxide_per_capita"][countryName] || null;
+                var co2 = gdpData["co2_per_capita"][countryName] || null;
+                var ghgTotal = gdpData["ghg_per_capita"][countryName] || null;
+                var nombreEspanol = gdpData["nombre_pais"][countryName] || countryName;
+
+                if (methane || nitrousOxide || co2 || ghgTotal) {
+                    showCountryDetails(nombreEspanol, methane, nitrousOxide, co2, ghgTotal);
+                }
+            })
+            .on("mouseover", function(d) {  // Evento de hover
+                    var countryName = normalizeCountryName(d.properties.name);
+                    
+                    // Obtener el ranking del país
+                    var rank = rankData[countryName] || null; 
+                    if (rank != null) {
+                        playSound(rank);
+                        d3.select(this).style("fill", "#b0c4de"); 
+                    }
+                })
+            .on("mouseout", function(d) {  // Evento mouseout para detener sonido
+                    stopSound();
+                    d3.select(this).style("fill", function(d) {
+                        var countryName = normalizeCountryName(d.properties.name);
+                        var ghgPerCapita = gdpData["ghg_per_capita"][countryName];
+                        return ghgPerCapita ? colorScale(ghgPerCapita) : "#ffffff";
+                    }); // Restaurar el color original
+                })
+            .append("title")
+            .text(function(d) {
+                var countryName = normalizeCountryName(d.properties.name);
+                var ghgPerCapita = gdpData["ghg_per_capita"][countryName];
+                return countryName + ": " + (ghgPerCapita ? ghgPerCapita + " Toneladas de gases de efecto invernadero per cápita" : "No data");
+            });
+            // Add red line connecting text to Qatar coordinates
+            svg.append("line")
+                .attr("x1", projection([51.1839, 25.3548])[0])
+                .attr("y1", projection([51.1839, 25.3548])[1])
+                .attr("x2", projection([51.1839, 25.3548])[0] + 70)
+                .attr("y2", projection([51.1839, 25.3548])[1] -31 + 90)
+                .attr("stroke", "#66c2a5")
+                .attr("stroke-width", 2);
+
+            svg.append("text")
+                .attr("x", projection([51.1839, 25.3548])[0] + 70)  // Qatar coordinates
+                .attr("y", projection([51.1839, 25.3548])[1] - 20 + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .html("<tspan font-weight='bold'>Qatar</tspan> es el país que");
+
+            svg.append("text")
+                .attr("x", projection([51.1839, 25.3548])[0] + 70)  // Qatar coordinates
+                .attr("y", projection([51.1839, 25.3548])[1] - 10 + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .html("<tspan font-weight='bold'>más emisiones</tspan> genera");
+
+            svg.append("text")
+                .attr("x", projection([51.1839, 25.3548])[0] + 70)  // Qatar coordinates
+                .attr("y", projection([51.1839, 25.3548])[1] + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .text("por persona");
+
+            // Add red line connecting text to Chile coordinates
+            svg.append("line")
+                .attr("x1", projection([-70.6483, -33.4569])[0])
+                .attr("y1", projection([-70.6483, -33.4569])[1])
+                .attr("x2", projection([-70.6483, -33.4569])[0] - 70)
+                .attr("y2", projection([-70.6483, -33.4569])[1] -31 + 90)
+                .attr("stroke", "#66c2a5")
+                .attr("stroke-width", 2);
+
+            svg.append("text")
+                .attr("x", projection([-70.6483, -33.4569])[0] - 70)  // Chile coordinates
+                .attr("y", projection([-70.6483, -33.4569])[1] - 20 + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .html("<tspan font-weight='bold'>Chile</tspan> genera <tspan font-weight='bold'>menos</tspan>");
+
+            svg.append("text")
+                .attr("x", projection([-70.6483, -33.4569])[0] - 70)  // Chile coordinates
+                .attr("y", projection([-70.6483, -33.4569])[1] - 10 + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .text("emisiones por persona");
+
+            svg.append("text")
+                .attr("x", projection([-70.6483, -33.4569])[0] - 70)  // Chile coordinates
+                .attr("y", projection([-70.6483, -33.4569])[1] + 90)
+                .attr("text-anchor", "middle")
+                .style("fill", "black")
+                .style("font-size", "12px")
+                .html("que <tspan font-weight='bold'>139</tspan> países");
+        });
+    });
+
+});
+
+
+</script>
+
